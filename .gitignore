@@ -1,0 +1,23 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging / tooling
+.egg
+*.egg
+.pytest-cache/
+.mypy_cache/
+.ruff_cache/
+
+# Athena local state
+*.log
+ATHENA.log
