@@ -87,8 +87,10 @@ std::vector<CPUProcessSample> diff(const CpuTick& now, const CpuTick& prev,
         CPUProcessSample r;
         r.pid = pid;
         r.name = now.names.at(pid);
+        // delta/(ticks*seconds) is the fraction of a core used (1.0 = one full
+        // core); psutil-style percent is 100x that, so >100 = multithreaded.
         r.cpu_percent =
-            static_cast<double>(delta) / (ticks_per_second * elapsed_seconds);
+            100.0 * static_cast<double>(delta) / (ticks_per_second * elapsed_seconds);
         if (const auto t = now.threads.find(pid); t != now.threads.end())
             r.threads = t->second;
         rows.push_back(std::move(r));
