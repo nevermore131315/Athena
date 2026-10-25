@@ -6,55 +6,62 @@ dashboard that shows **GPU**, **RAM**, and **CPU** side by side in one window.
 Built for multi-GPU boxes: with three NVIDIA cards on this machine, Athena draws
 one panel per subsystem and refreshes everything once a second.
 
+Now implemented in **C++ / FTXUI** (ported from the original Python/Textual
+prototype, which lives on in git history).
+
 ## What it shows
 
 | Panel | Source | Displays |
 |-------|--------|----------|
 | **GPU** | `nvidia-smi` (NVIDIA driver CLI) | Per-GPU utilization %, memory used/total, temperature, power draw |
-| **RAM** | `psutil` | RAM used / total / available and %, plus swap usage |
-| **CPU** | `psutil` | Top processes ranked by CPU %, with thread counts (a NVTOP-style process list, for the CPU) |
+| **RAM** | `/proc/meminfo` | RAM used / total / available and %, plus swap usage |
+| **CPU** | `/proc/[pid]/stat` | Top processes ranked by CPU %, with thread counts (a NVTOP-style process list, for the CPU) |
 
-## Install
+## Build
 
-Athena uses a virtual environment so its dependencies never clash with your
-system Python.
+Dependencies on Fedora: `sudo dnf install ftxui-devel spdlog-devel cmake gcc-c++`
 
 ```bash
-cd Athena
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j$(nproc)
 ```
 
 ## Run
 
 ```bash
-athena
-# or, without activating the venv:
-python -m athena
+./build/athena        # interactive TUI (q / Esc / Ctrl+C to quit)
+./build/athena --once # print one plain-text snapshot and exit
+./build/athena -v     # verbose collector logging to stderr
 ```
 
-Use `q` or `Ctrl+C` to quit.
+## Install
+
+```bash
+sudo cmake --install build   # puts `athena` in /usr/local/bin
+```
 
 ## How it's built (and why)
 
-The code is split into two layers that never talk to each other directly:
+The code keeps the same two-layer separation as the Python original, and moves
+all sampling onto a background thread so the UI never blocks:
 
 ```
-athena/
-├── core/   ← DATA LAYER: pure collectors that return plain data. No screen code.
-│   ├── gpu.py   pynvml → GPU snapshots
-│   ├── ram.py   psutil → RAM snapshots
-│   ├── cpu.py   psutil → CPU process rankings
-│   └── sample.py the plain data objects (GPUSample, RAMSample, CPUProcessSample)
-├── ui/     ← PRESENTATION: only renders what core/ produces.
-│   └── app.py   Textual dashboard
-└── main.py ← entry point that ties them together
+src/
+├── gpu.cpp/hpp   DATA: nvidia-smi subprocess → GPU snapshots (CSV parse)
+├── ram.cpp/hpp   DATA: /proc/meminfo → RAM snapshot (used = total - available)
+├── cpu.cpp/hpp   DATA: /proc/[pid]/stat → jiffy deltas → per-process CPU%
+├── sample.hpp    the plain data objects (GPUSample, RAMSample, CPUProcessSample)
+├── ui.cpp/hpp    PRESENTATION: FTXUI three-panel dashboard + sampler thread
+└── main.cpp      entry point (--once / -v / --help)
 ```
 
-The `core/` layer knows nothing about colors, fonts, or a screen — it just
-returns clean data. That means it's easy to test, and if you ever want a web
-version or a different layout, the data collection code doesn't need to change.
+Notes carried over from the Python version:
+
+- `nvidia-smi` CLI over NVML bindings — the driver CLI always works here, and
+  one subprocess per second is nothing.
+- CPU% is **not** normalized per core: >100% means more than one core busy.
+- The sampler thread takes a short (~250 ms) baseline at startup, then diffs
+  cumulative jiffies between refresh ticks — no sleeping in the UI path.
 
 ## Future work
 
