@@ -104,4 +104,59 @@ std::vector<CPUProcessSample> diff(const CpuTick& now, const CpuTick& prev,
     return rows;
 }
 
+SystemTick read_system() {
+    SystemTick t;
+    std::ifstream f("/proc/stat");
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.rfind("cpu", 0) != 0) continue;
+        std::istringstream is(line);
+        std::string label;
+        is >> label;
+        if (label == "cpu") {
+            long value = 0;
+            while (is >> value) t.counters.push_back(value);
+        } else {
+            ++t.cores;  // cpu0, cpu1, … one per hardware thread
+        }
+    }
+    return t;
+}
+
+// Whole-machine busy percent (0..100 across every core), the aggregate `cpu `
+// line of /proc/stat diffed across the sampling interval. This is what the
+// panel's CPU gauge grows against.
+CpuSystemSample diff_system(const SystemTick& now, const SystemTick& prev) {
+    CpuSystemSample s;
+    s.cores = now.cores;
+    // Both ticks must hold the same shape of counter list, and some elapsed
+    // work, or the gauge reads 0 rather than lying about a fresh CPU.
+    if (now.counters.size() < 4 || now.counters.size() != prev.counters.size())
+        return s;
+
+    long total_now = 0, idle_now = 0, total_prev = 0, idle_prev = 0;
+    for (size_t i = 0; i < now.counters.size(); ++i) {
+        // Fields 14/15 are guest and guest_nice, already counted inside `user`
+        // — htop skips them and so do we, or the denominator inflates and the
+        // gauge under-reads a busy box.
+        if (i >= 14) continue;
+        total_now += now.counters[i];
+        total_prev += prev.counters[i];
+        // Field 3 is idle, field 4 (when present) is idle-wait; both mean
+        // "not busy".
+        if (i == 3 || i == 4) {
+            idle_now += now.counters[i];
+            idle_prev += prev.counters[i];
+        }
+    }
+
+    const long elapsed = total_now - total_prev;
+    if (elapsed <= 0) return s;
+    long busy = elapsed - (idle_now - idle_prev);
+    if (busy < 0) busy = 0;
+    s.percent = 100.0 * static_cast<double>(busy) / static_cast<double>(elapsed);
+    if (s.percent > 100.0) s.percent = 100.0;
+    return s;
+}
+
 }  // namespace cpu

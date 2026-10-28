@@ -32,4 +32,15 @@ CpuTick read_tick();
 std::vector<CPUProcessSample> diff(const CpuTick& now, const CpuTick& prev,
                                    double elapsed_seconds, int limit);
 
+// The aggregate `cpu ` line of /proc/stat plus the number of `cpuN` lines.
+struct SystemTick {
+    std::vector<long> counters;  // user nice system idle iowait irq softirq steal …
+    int cores = 0;               // cpu0..cpuN entries seen
+};
+
+SystemTick read_system();
+
+// Whole-machine busy percentage (0..100 across all cores) between two SystemTicks.
+CpuSystemSample diff_system(const SystemTick& now, const SystemTick& prev);
+
 }  // namespace cpu

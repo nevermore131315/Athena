@@ -13,9 +13,15 @@ namespace gpu {
 namespace {
 
 // nvidia-smi query columns, in the same order parse_line() expects them.
+// Field names taken from this driver's `--help-query-gpu`; the nvtop-style
+// PCIe RX/TX traffic is omitted because it needs NVML profiling, not a query.
 constexpr const char* kQuery =
     "index,name,utilization.gpu,memory.used,memory.total,"
-    "temperature.gpu,power.draw";
+    "temperature.gpu,temperature.gpu_max,fan.speed,"
+    "power.draw,power.limit,"
+    "clocks.current.graphics,clocks.max.graphics,"
+    "clocks.current.memory,clocks.max.memory,"
+    "pcie.link.gen.current,pcie.link.width.current";
 
 std::string compact_name(const std::string& name) {
     // Trim the vendor prefix (like NVTOP does) so names fit narrow panels.
@@ -49,7 +55,9 @@ std::vector<std::string> split_csv(const std::string& line) {
 }
 
 bool parse_int(const std::string& s, int& out) {
-    if (s.empty() || s == "N/A" || s == "-") return false;
+    // nvidia-smi writes "N/A" for unsupported values, and this driver wraps
+    // some of them in brackets ("[N/A]" for temperature.gpu_max).
+    if (s.empty() || s.find("N/A") != std::string::npos || s == "-") return false;
     try {
         size_t pos = 0;
         out = std::stoi(s, &pos);
@@ -60,7 +68,7 @@ bool parse_int(const std::string& s, int& out) {
 }
 
 bool parse_double(const std::string& s, double& out) {
-    if (s.empty() || s == "N/A" || s == "-") return false;
+    if (s.empty() || s.find("N/A") != std::string::npos || s == "-") return false;
     try {
         size_t pos = 0;
         out = std::stod(s, &pos);
@@ -72,17 +80,31 @@ bool parse_double(const std::string& s, double& out) {
 
 GPUSample parse_line(const std::string& line) {
     const auto f = split_csv(line);
-    GPUSample g;
-    parse_int(f.size() > 0 ? f[0] : "", g.index);
-    g.name = (f.size() > 1 && !f[1].empty()) ? compact_name(f[1]) : "Unknown GPU";
-    parse_double(f.size() > 2 ? f[2] : "", g.utilization_percent);
-    parse_double(f.size() > 3 ? f[3] : "", g.memory_used_mib);
-    parse_double(f.size() > 4 ? f[4] : "", g.memory_total_mib);
+    // Field lookup that tolerates a driver omitting trailing columns.
+    const auto field = [&f](size_t i) { return i < f.size() ? f[i] : std::string{}; };
 
-    int temp = 0;
-    if (parse_int(f.size() > 5 ? f[5] : "", temp)) g.temperature_celsius = temp;
+    GPUSample g;
+    parse_int(field(0), g.index);
+    g.name = (!field(1).empty()) ? compact_name(field(1)) : "Unknown GPU";
+    parse_double(field(2), g.utilization_percent);
+    parse_double(field(3), g.memory_used_mib);
+    parse_double(field(4), g.memory_total_mib);
+
+    int value_i = 0;
+    if (parse_int(field(5), value_i)) g.temperature_celsius = value_i;
+    if (parse_int(field(6), value_i)) g.temperature_max_celsius = value_i;
+    if (parse_int(field(7), value_i)) g.fan_percent = value_i;
+
     double watts = 0.0;
-    if (parse_double(f.size() > 6 ? f[6] : "", watts)) g.power_watts = watts;
+    if (parse_double(field(8), watts)) g.power_watts = watts;
+    if (parse_double(field(9), watts)) g.power_limit_watts = watts;
+
+    if (parse_int(field(10), value_i)) g.clock_gpu_mhz = value_i;
+    if (parse_int(field(11), value_i)) g.clock_gpu_max_mhz = value_i;
+    if (parse_int(field(12), value_i)) g.clock_mem_mhz = value_i;
+    if (parse_int(field(13), value_i)) g.clock_mem_max_mhz = value_i;
+    if (parse_int(field(14), value_i)) g.pcie_gen = value_i;
+    if (parse_int(field(15), value_i)) g.pcie_width = value_i;
     return g;
 }
 
